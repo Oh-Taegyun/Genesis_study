@@ -4,21 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "0170f43734cdeee7",
+        "id": "525e275cbdada04d",
         "type": "tabs",
         "children": [
           {
-            "id": "001e4281f91870f8",
+            "id": "eddbc7725b9c1ed5",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "실행한 코드 정리/1. fly.py.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "1. fly.py"
+              "title": "새 탭"
             }
           }
         ]
@@ -159,26 +155,42 @@
       "command-palette:명령어 팔레트 열기": false
     }
   },
-  "active": "001e4281f91870f8",
+  "active": "eddbc7725b9c1ed5",
   "lastOpenFiles": [
-    "실행한 코드 정리/6. accelerometer_duck.py.md",
+    "Drone/호버링 예제/hover_eval.py.md",
+    "image",
+    "Drone/호버링 예제/hover_train.py.md",
+    "Drone/호버링 예제/hover_env.py.md",
+    "Drone/호버링 예제/model/utils.py.md",
+    "Drone/호버링 예제/model/sac.py.md",
+    "Drone/호버링 예제/model/replay_buffer.py.md",
+    "Drone/호버링 예제/model/critic.py.md",
+    "Drone/호버링 예제/model/actor.py.md",
+    "Drone/호버링 예제/model",
+    "만든 환경 정리/env.py.md",
+    "Drone/호버링 예제",
+    "Drone/2. 호버링 예제 코드.md",
+    "만든 환경 정리/train.py.md",
     "실행한 코드 정리/4. hover_train.py.md",
+    "만든 환경 정리",
+    "실행한 코드 정리/2. hover_env.py.md",
+    "image/Pasted image 20250304161408.png",
+    "Pasted image 20250304161339.png",
+    "Pasted image 20250304161337.png",
     "실행한 코드 정리/3. hover_eval.py.md",
-    "사용 방법/7. rigid_entity.md",
+    "사용 방법/1. 어떻게 사용하는가?.md",
     "실행한 코드 정리/1. fly.py.md",
+    "실행한 코드 정리/6. accelerometer_duck.py.md",
+    "사용 방법/7. rigid_entity.md",
     "실행한 코드 정리/5. interactive_drone.md",
     "사용 방법/6. 링크.md",
     "사용 방법/5. 조인트.md",
     "사용 방법/4. Morph.md",
     "사용 방법/3. drone_entity.py.md",
     "사용 방법/2. 드론 엑터.md",
-    "사용 방법/1. 어떻게 사용하는가?.md",
     "사용 방법",
-    "실행한 코드 정리/2. hover_env.py.md",
     "실행한 코드 정리",
     "README.md",
-    "Drone/2. 호버링 예제 코드.md",
-    "Drone/1. 드론 예제.md",
     "Drone"
   ]
 }

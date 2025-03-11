@@ -4,153 +4,139 @@ import math
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
 
-# 지정된 범위 내에서 랜덤한 float 값을 생성하는 함수
+
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
-# HoverEnv 클래스 정의
 class HoverEnv:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=True, device="cuda"):
-        # 디바이스 설정 (기본값: CUDA)
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, device="cuda"):
         self.device = torch.device(device)
 
-        # 환경 변수 설정
-        self.num_envs = num_envs  # 병렬로 실행될 환경 개수
-        self.num_obs = obs_cfg["num_obs"]  # 관측 벡터 크기
-        self.num_privileged_obs = None  # 특권 관측 변수 (현재 사용 안 함)
-        self.num_actions = env_cfg["num_actions"]  # 행동 벡터 크기
-        self.num_commands = command_cfg["num_commands"]  # 명령 벡터 크기
+        self.num_envs = num_envs
+        self.num_obs = obs_cfg["num_obs"]
+        self.num_privileged_obs = None
+        self.num_actions = env_cfg["num_actions"]
+        self.num_commands = command_cfg["num_commands"]
 
-        # 행동 지연 시뮬레이션 여부
         self.simulate_action_latency = env_cfg["simulate_action_latency"]
-        self.dt = 0.01  # 100Hz로 시뮬레이션 실행
-        self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)  # 최대 에피소드 길이 계산
+        self.dt = 0.01  # run in 100hz
+        self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
 
-        # 환경, 관측, 보상, 명령 설정 저장
         self.env_cfg = env_cfg
         self.obs_cfg = obs_cfg
         self.reward_cfg = reward_cfg
         self.command_cfg = command_cfg
 
-        # 관측 및 보상 스케일 설정
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = reward_cfg["reward_scales"]
 
-        # 시뮬레이션 장면 생성
+        # create scene
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),  # 시뮬레이션 시간 설정
-            viewer_options=gs.options.ViewerOptions(  # 뷰어 옵션 설정
+            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
+            viewer_options=gs.options.ViewerOptions(
                 max_FPS=env_cfg["max_visualize_FPS"],
                 camera_pos=(3.0, 0.0, 3.0),
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,
             ),
-            vis_options=gs.options.VisOptions(n_rendered_envs=10),  # 렌더링할 환경 수
-            rigid_options=gs.options.RigidOptions(  # 강체 시뮬레이션 설정
+            vis_options=gs.options.VisOptions(n_rendered_envs=10),
+            rigid_options=gs.options.RigidOptions(
                 dt=self.dt,
-                constraint_solver=gs.constraint_solver.Newton,  # 뉴턴 방식 제약 조건 해결기
-                enable_collision=True,  # 충돌 감지 활성화
-                enable_joint_limit=True,  # 관절 제한 활성화
+                constraint_solver=gs.constraint_solver.Newton,
+                enable_collision=True,
+                enable_joint_limit=True,
             ),
-            show_viewer=show_viewer,  # 뷰어 표시 여부
+            show_viewer=show_viewer,
         )
 
-        # 지면(Plane) 추가
+        # add plane
         self.scene.add_entity(gs.morphs.Plane())
 
-        # 목표 지점 추가 (시각화 활성화 여부에 따라)
+        # add target
         if self.env_cfg["visualize_target"]:
             self.target = self.scene.add_entity(
                 morph=gs.morphs.Mesh(
-                    file="meshes/sphere.obj",  # 목표 지점 메시 파일
-                    scale=0.05,  # 크기
-                    fixed=True,  # 고정된 물체
-                    collision=False,  # 충돌 감지 비활성화
+                    file="meshes/sphere.obj",
+                    scale=0.05,
+                    fixed=True,
+                    collision=False,
                 ),
                 surface=gs.surfaces.Rough(
                     diffuse_texture=gs.textures.ColorTexture(
-                        color=(1.0, 0.5, 0.5),  # 목표 지점 색상 (붉은 계열)
+                        color=(1.0, 0.5, 0.5),
                     ),
                 ),
             )
         else:
-            self.target = None  # 목표 지점 비활성화
+            self.target = None
 
-        # 카메라 추가 (시각화 여부에 따라)
+        # add camera
         if self.env_cfg["visualize_camera"]:
             self.cam = self.scene.add_camera(
-                res=(640, 480),  # 해상도 설정
-                pos=(3.5, 0.0, 2.5),  # 카메라 위치
-                lookat=(0, 0, 0.5),  # 카메라 시점
-                fov=30,  # 시야각
-                GUI=True,  # GUI 사용 여부
+                res=(640, 480),
+                pos=(3.5, 0.0, 2.5),
+                lookat=(0, 0, 0.5),
+                fov=30,
+                GUI=True,
             )
 
-        # 드론 추가
-        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)  # 초기 위치
-        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)  # 초기 쿼터니언
-        self.inv_base_init_quat = inv_quat(self.base_init_quat)  # 초기 쿼터니언의 역변환
-        self.drone = self.scene.add_entity(gs.morphs.Drone(file=env_cfg["urdf_file"]))  # 드론 로드
+        # add drone
+        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
+        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
+        self.inv_base_init_quat = inv_quat(self.base_init_quat)
+        self.drone = self.scene.add_entity(gs.morphs.Drone(file="urdf/drones/cf2x.urdf"))
 
-        # 시뮬레이션 환경 빌드
+        # build scene
         self.scene.build(n_envs=num_envs)
 
-        # 보상 함수 준비 및 스케일 적용
+        # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
         for name in self.reward_scales.keys():
-            self.reward_scales[name] *= self.dt  # 보상 값에 시뮬레이션 시간 스텝 적용
-            self.reward_functions[name] = getattr(self, "_reward_" + name)  # 보상 함수 참조 저장
+            self.reward_scales[name] *= self.dt
+            self.reward_functions[name] = getattr(self, "_reward_" + name)
             self.episode_sums[name] = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
 
-        # 버퍼 초기화
-        self.obs_buf = torch.zeros((self.num_envs, self.num_obs), device=self.device, dtype=gs.tc_float)  # 관측 버퍼
-        self.rew_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)  # 보상 버퍼
-        self.reset_buf = torch.ones((self.num_envs,), device=self.device, dtype=gs.tc_int)  # 리셋 버퍼
-        self.episode_length_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_int)  # 에피소드 길이 버퍼
-        self.commands = torch.zeros((self.num_envs, self.num_commands), device=self.device, dtype=gs.tc_float)  # 명령 버퍼
+        # initialize buffers
+        self.obs_buf = torch.zeros((self.num_envs, self.num_obs), device=self.device, dtype=gs.tc_float)
+        self.rew_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
+        self.reset_buf = torch.ones((self.num_envs,), device=self.device, dtype=gs.tc_int)
+        self.episode_length_buf = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_int)
+        self.commands = torch.zeros((self.num_envs, self.num_commands), device=self.device, dtype=gs.tc_float)
 
-        # 행동 및 이전 행동 버퍼
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=gs.tc_float)
         self.last_actions = torch.zeros_like(self.actions)
 
-        # 드론의 상태 변수 버퍼
-        self.base_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)  # 위치
-        self.base_quat = torch.zeros((self.num_envs, 4), device=self.device, dtype=gs.tc_float)  # 방향 (쿼터니언)
-        self.base_lin_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)  # 선속도
-        self.base_ang_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)  # 각속도
-        self.last_base_pos = torch.zeros_like(self.base_pos)  # 이전 위치
+        self.base_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
+        self.base_quat = torch.zeros((self.num_envs, 4), device=self.device, dtype=gs.tc_float)
+        self.base_lin_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
+        self.base_ang_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
+        self.last_base_pos = torch.zeros_like(self.base_pos)
 
-        self.extras = dict()  # 추가적인 로그 정보 저장을 위한 딕셔너리
+        self.extras = dict()  # extra information for logging
 
-        # 명령어를 재샘플링하는 함수
     def _resample_commands(self, envs_idx):
-        # 각 축에 대해 명령어 범위 내에서 랜덤 값을 설정
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["pos_x_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["pos_y_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["pos_z_range"], (len(envs_idx),), self.device)
-        # 타겟이 있을 경우, 해당 위치로 타겟 이동
         if self.target is not None:
             self.target.set_pos(self.commands[envs_idx], zero_velocity=True, envs_idx=envs_idx)
 
-    # 드론이 목표 지점에 도달했는지 판단하는 함수
     def _at_target(self):
         at_target = (
             (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"]).nonzero(as_tuple=False).flatten()
         )
         return at_target
 
-    # 시뮬레이션 한 스텝을 진행하는 함수
     def step(self, actions):
-        # 액션 값을 클리핑하여 저장
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.actions
 
-        # 프로펠러 회전수 설정 (기본 호버 RPM에 액션 비율 적용)
+        # 14468 is hover rpm
         self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
-        self.scene.step()  # 시뮬레이션 스텝 실행
+        self.scene.step()
 
-        # 버퍼 업데이트
+        # update buffers
         self.episode_length_buf += 1
         self.last_base_pos[:] = self.base_pos[:]
         self.base_pos[:] = self.drone.get_pos()
@@ -164,11 +150,11 @@ class HoverEnv:
         self.base_lin_vel[:] = transform_by_quat(self.drone.get_vel(), inv_base_quat)
         self.base_ang_vel[:] = transform_by_quat(self.drone.get_ang(), inv_base_quat)
 
-        # 목표 도달 여부 확인 후 명령 재샘플링
+        # resample commands
         envs_idx = self._at_target()
         self._resample_commands(envs_idx)
 
-        # 종료 조건 검사
+        # check termination and reset
         self.crash_condition = (
             (torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"])
             | (torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"])
@@ -179,22 +165,20 @@ class HoverEnv:
         )
         self.reset_buf = (self.episode_length_buf > self.max_episode_length) | self.crash_condition
 
-        # 타임아웃 인덱스 저장 및 extras에 기록
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=self.device, dtype=gs.tc_float)
         self.extras["time_outs"][time_out_idx] = 1.0
 
-        # 리셋이 필요한 환경들 리셋
         self.reset_idx(self.reset_buf.nonzero(as_tuple=False).flatten())
 
-        # 보상 계산
+        # compute reward
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
             rew = reward_func() * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
 
-        # 관측값 계산
+        # compute observations
         self.obs_buf = torch.cat(
             [
                 torch.clip(self.rel_pos * self.obs_scales["rel_pos"], -1, 1),
@@ -206,24 +190,21 @@ class HoverEnv:
             axis=-1,
         )
 
-        self.last_actions[:] = self.actions[:]  # 액션 값 업데이트
+        self.last_actions[:] = self.actions[:]
 
-        return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras  # 결과 반환
+        return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
 
-    # 현재 관측값 반환
     def get_observations(self):
         return self.obs_buf
 
-    # 특권 관측값 없음
     def get_privileged_observations(self):
         return None
 
-    # 주어진 환경 인덱스를 리셋
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
             return
 
-        # 초기 위치와 회전값으로 리셋
+        # reset base
         self.base_pos[envs_idx] = self.base_init_pos
         self.last_base_pos[envs_idx] = self.base_init_pos
         self.rel_pos = self.commands - self.base_pos
@@ -235,12 +216,12 @@ class HoverEnv:
         self.base_ang_vel[envs_idx] = 0
         self.drone.zero_all_dofs_velocity(envs_idx)
 
-        # 버퍼 초기화
+        # reset buffers
         self.last_actions[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
         self.reset_buf[envs_idx] = True
 
-        # 에피소드 리셋 정보 기록
+        # fill extras
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
             self.extras["episode"]["rew_" + key] = (
@@ -248,46 +229,35 @@ class HoverEnv:
             )
             self.episode_sums[key][envs_idx] = 0.0
 
-        # 명령어 재샘플링
         self._resample_commands(envs_idx)
 
-    # 전체 환경 리셋
     def reset(self):
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         return self.obs_buf, None
 
-    # ---------------- 보상 함수 ----------------
-    # 목표에 가까워진 정도에 따른 보상
+    # ------------ reward functions----------------
     def _reward_target(self):
         target_rew = torch.sum(torch.square(self.last_rel_pos), dim=1) - torch.sum(torch.square(self.rel_pos), dim=1)
         return target_rew
 
-    # 액션 변화량에 따른 보상
     def _reward_smooth(self):
         smooth_rew = torch.sum(torch.square(self.actions - self.last_actions), dim=1)
         return smooth_rew
 
-    # Yaw 회전에 따른 보상
     def _reward_yaw(self):
         yaw = self.base_euler[:, 2]
-        yaw = torch.where(yaw > 180, yaw - 360, yaw) / 180 * 3.14159
+        yaw = torch.where(yaw > 180, yaw - 360, yaw) / 180 * 3.14159  # use rad for yaw_reward
         yaw_rew = torch.exp(self.reward_cfg["yaw_lambda"] * torch.abs(yaw))
         return yaw_rew
 
-    # 각속도에 따른 보상
     def _reward_angular(self):
         angular_rew = torch.norm(self.base_ang_vel / 3.14159, dim=1)
         return angular_rew
 
-    # 충돌에 따른 보상
     def _reward_crash(self):
         crash_rew = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
         crash_rew[self.crash_condition] = 1
         return crash_rew
+
 ```
-
-
-![[Pasted image 20250304161408.png]]
-
-
